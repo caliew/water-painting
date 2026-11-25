@@ -170,7 +170,9 @@
       <h2>Captions: one line per caption, Chinese or English</h2><textarea id="cap"></textarea>
       <div class="row" style="margin-top:8px"><button id="capload">Load captions.txt</button></div>
       <div id="capst" style="font:11px monospace;opacity:.8;margin:6px 0"></div>
-      <div>Height (below / above eye level)</div><input id="caph" type="range" min="-1.2" max="1.5" step=".05" value="-.5" style="width:100%">
+      <div>Show captions</div><select id="capshow" style="width:100%"><option value="1" selected>On</option><option value="0">Off</option></select>
+      <div style="margin-top:6px">Position</div><select id="capmode" style="width:100%"><option value="1" selected>Follow my head, smoothly (recommended)</option><option value="2">Locked to my head</option><option value="0">Fixed in the room</option></select>
+      <div style="margin-top:6px">Height (below / above eye level)</div><input id="caph" type="range" min="-1.2" max="1.5" step=".05" value="-.5" style="width:100%">
       <div>Size</div><input id="caps" type="range" min=".4" max="2" step=".05" value="1" style="width:100%">
       <div>Line length</div><input id="capw" type="range" min="300" max="2000" step="20" value="940" style="width:100%">
       <div>Font</div><select id="capfont" style="width:100%"></select>
@@ -187,7 +189,7 @@
   <div id="bar"><button id="vr">Enter VR</button></div>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   <script>
-    const VERSION = '2026-11-22 · build 21';
+    const VERSION = '2026-11-22 · build 23';
     const EYE = 1.5, SCENES = ['River', 'Mountain'], TODS = ['Dawn', 'Day', 'Dusk', 'Night'], TIMERS = [0, 5, 10, 20];
     // Later: put your own recordings next to index.html, e.g. 'audio/river.mp3'. A set path replaces the synthesized sound.
     const AUDIO_FILES = { river: '', mountain: '' };
@@ -199,7 +201,7 @@
       { top: [.04, .06, .12], hor: [.16, .20, .30], ink: [.03, .04, .08], sun: [.8, .85, 1], dir: [.3, .45, -.8], night: 1 }
     ].map(p => ({ top: v(p.top), hor: v(p.hor), ink: v(p.ink), sun: v(p.sun), dir: v(p.dir), night: p.night }));
     let rotDeg = 1, sc = 0, pending = null, tod = 1, timerIdx = 0, vol = .6, zenMusicOn = true, inXR = false, eyeY = EYE, frames = 0, lastErr = '', fade = 1, shownUntil = 0;
-    let timerEnd = 0, timerDone = false, lines = [], capI = -1, capText = '', CAP_SEC = 14, capH = -.5, capS = 1, capW = 940, capFont = 0, capColor = '#f4efe4', capShadow = 1;
+    let timerEnd = 0, timerDone = false, lines = [], capI = -1, capText = '', CAP_SEC = 14, capH = -.5, capS = 1, capW = 940, capFont = 0, capColor = '#f4efe4', capShadow = 1, capMode = 1, capYaw = 0, capMoving = false, capShow = true, capPanelOn = false;
     const $ = id => document.getElementById(id);
 
     /* ---------- renderer ---------- */
@@ -326,8 +328,8 @@ void main(){
       const t = Math.max(0, Math.ceil((timerEnd - performance.now()) / 1000)); return (t / 60 | 0) + ':' + String(t % 60).padStart(2, '0');
     }
     const CW = 112;
-    const BTN = ['Scene', 'Time', 'Music', 'Timer', 'Vol−', 'Vol+', 'Mix−', 'Mix+', 'Spd−', 'Spd', 'Spd+', 'Pause', 'Dir', 'Zoom−', 'Zoom+', 'Shuffle', 'Exit'];
-    const panel = canvasPanel(1.4875, .1, 1904, 128, (c, W, H) => {
+    const BTN = ['Scene', 'Time', 'Music', 'Timer', 'Vol−', 'Vol+', 'Mix−', 'Mix+', 'Spd−', 'Spd', 'Spd+', 'Pause', 'Dir', 'Zoom−', 'Zoom+', 'Caption', 'Shuffle', 'Exit'];
+    const panel = canvasPanel(1.575, .1, 2016, 128, (c, W, H) => {
       c.clearRect(0, 0, W, H); c.font = 'bold 25px sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle';
       BTN.forEach((b, i) => {
         let t = b, on = false, bg = 'rgba(16,21,28,.85)';
@@ -335,7 +337,7 @@ void main(){
         else if (b === 'Music') { t = zenMusicOn ? 'Zen' : 'Nature'; on = zenMusicOn; }
         else if (b === 'Timer') t = timerShort();
         else if (b === 'Spd') t = rotDeg.toFixed(1) + '°/s'; else if (b === 'Pause') { t = paused ? 'Play' : 'Pause'; on = paused; }
-        else if (b === 'Dir') t = rotDir > 0 ? 'Dir L' : 'Dir R'; else if (b === 'Exit') bg = 'rgba(170,45,45,.92)';
+        else if (b === 'Dir') t = rotDir > 0 ? 'Dir L' : 'Dir R'; else if (b === 'Caption') on = capPanelOn; else if (b === 'Exit') bg = 'rgba(170,45,45,.92)';
         c.fillStyle = on ? 'rgba(62,198,168,.92)' : bg; rr(c, i * CW + 3, 8, CW - 6, 112, 14); c.fill();
         c.fillStyle = on ? '#06201a' : '#e6edf3'; c.fillText(t, i * CW + CW / 2, 66);
       });
@@ -362,8 +364,35 @@ void main(){
       c.shadowColor = capShadow ? 'rgba(0,0,0,' + (capShadow === 2 ? .95 : .7) + ')' : 'transparent'; c.shadowBlur = capShadow === 2 ? 16 : 10;
       for (let pass = 0; pass < (capShadow === 2 ? 2 : 1); pass++) L.forEach((t, i) => c.fillText(t, W / 2, H / 2 + (i - (L.length - 1) / 2) * lh));
     });
-    cap.material.opacity = 0; scene.add(cap);
-    function layoutAll() { panel.position.set(0, eyeY - .8, -1); panel.rotation.x = -.6; cap.position.set(0, eyeY + capH, -2.5); cap.scale.setScalar(capS); }
+    cap.material.opacity = 0; cap.renderOrder = 4; scene.add(cap);
+    const CAP_COLORS = ['#f4efe4', '#ffffff', '#f2d27a', '#9fe3c4', '#f5b7c0', '#a8d4ff', '#1d1b1e'];
+    const lum = h => { const n = parseInt(h.slice(1), 16); return (.299 * (n >> 16 & 255) + .587 * (n >> 8 & 255) + .114 * (n & 255)) / 255; };
+    const CBTN = ['Show', 'Pos', 'Hgt−', 'Hgt+', 'Size−', 'Size+', 'Len−', 'Len+', 'Font', 'Color', 'Shadow'];
+    const capPanel = canvasPanel(.9625, .1, 1232, 128, (c, W, H) => {   // caption controls inside VR: opened with the "Caption" button
+      c.clearRect(0, 0, W, H); c.font = 'bold 25px sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle';
+      CBTN.forEach((b, i) => {
+        let t = b, on = false, bg = 'rgba(16,21,28,.85)', fg = '#e6edf3';
+        if (b === 'Show') { t = capShow ? 'Text on' : 'Text off'; on = capShow; }
+        else if (b === 'Pos') t = ['Fixed', 'Follow', 'Locked'][capMode];
+        else if (b === 'Font') t = 'Font ' + (capFont + 1);
+        else if (b === 'Color') { bg = capColor; fg = lum(capColor) > .55 ? '#10151c' : '#ffffff'; }
+        else if (b === 'Shadow') t = ['Shad 0', 'Shad 1', 'Shad 2'][capShadow];
+        c.fillStyle = on ? 'rgba(62,198,168,.92)' : bg; rr(c, i * CW + 3, 8, CW - 6, 112, 14); c.fill();
+        c.fillStyle = on ? '#06201a' : fg; c.fillText(t, i * CW + CW / 2, 66);
+      });
+    });
+    capPanel.visible = false; scene.add(capPanel);   // separate layer: drawn above the wall, below the control panel, never picked by the controller
+    const _cp = new THREE.Vector3(), _cf = new THREE.Vector3();
+    function placeCaption(dt) {   // 0 = fixed in the room, 1 = glides to stay in front of you, 2 = locked to your head
+      cap.scale.setScalar(capS);
+      if (capMode === 0) { cap.position.set(0, eyeY + capH, -2.5); cap.rotation.y = 0; return; }
+      camera.getWorldDirection(_cf); camera.getWorldPosition(_cp);
+      const target = Math.atan2(_cf.x, -_cf.z); let d = target - capYaw; d = Math.atan2(Math.sin(d), Math.cos(d));
+      if (capMode === 2 || dt === 0) { capYaw = target; capMoving = false; }
+      else { if (Math.abs(d) > .45) capMoving = true; if (capMoving) { capYaw += d * Math.min(1, dt * 2.5); if (Math.abs(d) < .03) capMoving = false; } }
+      cap.position.set(Math.sin(capYaw) * 2.5, _cp.y + capH, -Math.cos(capYaw) * 2.5); cap.rotation.y = -capYaw;
+    }
+    function layoutAll() { panel.position.set(0, eyeY - .8, -1); panel.rotation.x = -.6; capPanel.position.set(0, eyeY - .8 + .099, -1.068); capPanel.rotation.x = -.6; placeCaption(0); }
     layoutAll();
 
     function paint(w, h, fn) {
@@ -687,9 +716,24 @@ void main(){
     }
     try { const m = localStorage.getItem('med.zen'); if (m !== null) zenMusicOn = m === '1'; } catch (e) { }
 
+    function capPanelHit(uv) {   // every button changes the matching menu control, so menu and VR always agree and are saved the same way
+      const bump = (id, d) => { $(id).value = +$(id).value + d; };
+      switch (CBTN[Math.min(10, Math.floor(uv.x * 11))]) {
+        case 'Show': $('capshow').value = capShow ? 0 : 1; break;
+        case 'Pos': $('capmode').value = ({ 1: 2, 2: 0, 0: 1 })[capMode]; break;
+        case 'Hgt−': bump('caph', -.1); break; case 'Hgt+': bump('caph', .1); break;
+        case 'Size−': bump('caps', -.1); break; case 'Size+': bump('caps', .1); break;
+        case 'Len−': bump('capw', -100); break; case 'Len+': bump('capw', 100); break;
+        case 'Font': $('capfont').value = (capFont + 1) % CAP_FONTS.length; break;
+        case 'Color': $('capcolor').value = CAP_COLORS[(CAP_COLORS.indexOf(capColor) + 1) % CAP_COLORS.length]; break;
+        case 'Shadow': $('capshadow').value = (capShadow + 1) % 3; break;
+      }
+      setCapLayout(true);
+    }
     function panelHit(uv) {
-      switch (BTN[Math.min(16, Math.floor(uv.x * 17))]) {
+      switch (BTN[Math.min(17, Math.floor(uv.x * 18))]) {
         case 'Scene': step(1); break;
+        case 'Caption': capPanelOn = !capPanelOn; break;
         case 'Time': tod = (tod + 1) % 4; refreshSky(); refreshUI(); break;
         case 'Music': setMusic(!zenMusicOn); break;
         case 'Timer': setTimer(timerIdx + 1); break;
@@ -749,13 +793,13 @@ void main(){
     }
     function setCapLayout(save) {   // sliders: height, size, line length; font, colour, shadow
       capH = +$('caph').value; capS = +$('caps').value; capW = +$('capw').value;
-      capFont = +$('capfont').value; capColor = $('capcolor').value; capShadow = +$('capshadow').value;
-      layoutAll(); cap.userData.redraw(); loadCapFont();
-      if (save) { try { localStorage.setItem('med.capl', [capH, capS, capW, capFont, capColor, capShadow].join(',')); } catch (e) { } }
+      capFont = +$('capfont').value; capColor = $('capcolor').value; capShadow = +$('capshadow').value; capMode = +$('capmode').value; capShow = $('capshow').value === '1';
+      layoutAll(); cap.userData.redraw(); capPanel.userData.redraw(); loadCapFont();
+      if (save) { try { localStorage.setItem('med.capl', [capH, capS, capW, capFont, capColor, capShadow, capMode, capShow ? 1 : 0].join(',')); } catch (e) { } }
     }
     CAP_FONTS.forEach((f, i) => { const o = document.createElement('option'); o.value = i; o.textContent = f[0]; $('capfont').appendChild(o); });
-    try { const c = (localStorage.getItem('med.capl') || '').split(','); if (c.length >= 3 && c.slice(0, 3).every(x => isFinite(+x))) { $('caph').value = c[0]; $('caps').value = c[1]; $('capw').value = c[2]; if (c.length >= 6) { $('capfont').value = c[3]; $('capcolor').value = c[4]; $('capshadow').value = c[5]; } } } catch (e) { }
-    ['caph', 'caps', 'capw', 'capfont', 'capcolor', 'capshadow'].forEach(id => $(id).oninput = () => setCapLayout(true)); setCapLayout(false);
+    try { const c = (localStorage.getItem('med.capl') || '').split(','); if (c.length >= 3 && c.slice(0, 3).every(x => isFinite(+x))) { $('caph').value = c[0]; $('caps').value = c[1]; $('capw').value = c[2]; if (c.length >= 6) { $('capfont').value = c[3]; $('capcolor').value = c[4]; $('capshadow').value = c[5]; } if (c.length >= 7) $('capmode').value = c[6]; if (c.length >= 8) $('capshow').value = c[7]; } } catch (e) { }
+    ['caph', 'caps', 'capw', 'capfont', 'capcolor', 'capshadow', 'capmode', 'capshow'].forEach(id => $(id).oninput = () => setCapLayout(true)); setCapLayout(false);
     let menuHidden = false;
     const showDomUi = () => { $('ui').style.display = menuHidden ? 'none' : ''; $('menuBtn').style.display = menuHidden ? 'block' : 'none'; $('bar').style.display = ''; };
     const hideDomUi = () => { $('ui').style.display = 'none'; $('menuBtn').style.display = 'none'; $('bar').style.display = 'none'; };
@@ -776,7 +820,7 @@ void main(){
     /* ---------- controllers ---------- */
     const ray = new THREE.Raycaster(), rot = new THREE.Matrix4();
     const panelOn = () => inXR && performance.now() < shownUntil;
-    function pick() { const was = panelOn(); shownUntil = performance.now() + 15000; if (!was) return; const h = ray.intersectObject(panel)[0]; if (h) panelHit(h.uv); }
+    function pick() { const was = panelOn(); shownUntil = performance.now() + 15000; if (!was) return; const h = ray.intersectObjects(capPanelOn ? [panel, capPanel] : [panel])[0]; if (h) { if (h.object === capPanel) capPanelHit(h.uv); else panelHit(h.uv); } }
     for (let i = 0; i < 2; i++) {
       const c = renderer.xr.getController(i); c.visible = false;
       c.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([new V3(), new V3(0, 0, -4)]), new THREE.LineBasicMaterial({ color: 0x3ec6a8 })));
@@ -834,14 +878,15 @@ void main(){
       U.uYaw.value = yaw3; { const cy = Math.cos(yaw3), sy = Math.sin(yaw3); U.uFwd.value.set(fwdV.x * cy - fwdV.z * sy, fwdV.y, fwdV.x * sy + fwdV.z * cy); }
       birds.position.x = Math.sin(t * .05 + .6) * 10; birds.position.z = -Math.cos(t * .05 + .6) * 10; birds.rotation.y = -(t * .05 + .6);
       if (timerEnd && performance.now() >= timerEnd) { timerEnd = 0; timerDone = true; bell(); }
-      panel.visible = panelOn();
-      if (panel.visible && now - tdraw > .25) { tdraw = now; panel.userData.redraw(); }
+      panel.visible = panelOn(); capPanel.visible = panel.visible && capPanelOn;
+      if (panel.visible && now - tdraw > .25) { tdraw = now; panel.userData.redraw(); if (capPanel.visible) capPanel.userData.redraw(); }
       if (lines.length) {
         const idx = Math.floor(t / CAP_SEC) % lines.length, ph = (t % CAP_SEC) / CAP_SEC;
         if (idx !== capI) { capI = idx; capText = lines[idx]; cap.userData.redraw(); loadCapFont(); }
-        cap.material.opacity = Math.min(1, ph * 5, (1 - ph) * 5);
+        cap.material.opacity = capShow ? Math.min(1, ph * 5, (1 - ph) * 5) : 0;
       } else cap.material.opacity = 0;
       if (!inXR) camera.rotation.set(pitch, yaw, 0);
+      placeCaption(dt);
       const s = renderer.xr.getSession();
       if (s && inXR) {
         let sx = 0, sy = 0, b4 = false, b5 = false;
